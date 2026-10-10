@@ -1,0 +1,13 @@
+[project]
+name = "baltika-shift-bot"
+version = "1.0.0"
+description = "Telegram-бот учёта сменного графика с уведомлениями"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"

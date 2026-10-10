@@ -1,0 +1,7 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+webapp/node_modules/
+webapp/dist-preview/
+webapp/.env.preview
