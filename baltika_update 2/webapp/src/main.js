@@ -4,6 +4,7 @@ import { animate } from "motion";
 import { api, tg, ready } from "./api.js";
 import { mugSvg } from "./mug.js";
 import * as fx from "./fx.js";
+import { mountSetup } from "./setup.js";
 
 const LK_URL = "https://lk.baltika.com/";
 const TITLES = { shift: "Смена", schedule: "График", shuttle: "Развозка", stats: "Стаж", more: "Ещё" };
@@ -107,13 +108,39 @@ const hoursOf = (d) => (d.start && d.end ? (Date.parse(d.end) - Date.parse(d.sta
 
 /* ---------- загрузка ---------- */
 
+/* экран настройки графика: первый запуск (не зарегистрирован) или «Изменить график» из «Ещё» */
+function openSetup(editing) {
+  document.body.classList.add("setup-mode");
+  const host = $("setupHost");
+  host.hidden = false;
+  mountSetup(host, {
+    editing,
+    current: S && S.schedule,
+    onBack: editing ? closeSetup : undefined,
+    onDone: async () => {
+      closeSetup();
+      toast("График сохранён");
+      await load();
+    },
+  });
+}
+function closeSetup() {
+  document.body.classList.remove("setup-mode");
+  $("setupHost").hidden = true;
+}
+
 async function load() {
   try {
     await ready;
     S = await api("/api/state");
+    closeSetup();
     $("who").textContent = S.name || "";
     renderAll();
   } catch (e) {
+    if (e.message === "not_registered") {
+      openSetup(false);
+      return;
+    }
     const msg = {
       auth: "Открой приложение из Telegram: без подписи данные не отдаём.",
       not_registered: "Сначала настрой график в боте: /start",
@@ -497,6 +524,7 @@ function renderMore() {
   const group = (list) => `<div class="group" data-iv>${list.map((c) => choiceHtml(c, cfg)).join("")}</div>`;
   $("v-more").innerHTML = `
     ${profileCard()}
+    <button class="btn ghost press" id="schedBtn" data-r>${svgIco("cal")}<span>Изменить график</span></button>
     <section class="hero tilt theme-lk" data-r>
       <div class="tilt-in">
         <div class="bubbles" id="bubs3"></div>
@@ -934,6 +962,7 @@ $("v-more").addEventListener("change", (e) => {
 });
 $("v-more").addEventListener("click", (e) => {
   if (e.target.closest("#lkBtn2")) return openLk();
+  if (e.target.closest("#schedBtn")) return openSetup(true);
   if (e.target.closest("#vacBtn")) return openVacation();
   if (e.target.closest("#sickBtn")) return openSick();
   if (e.target.closest("#hiredBtn")) return openHired();
