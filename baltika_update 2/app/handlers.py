@@ -136,10 +136,15 @@ async def cmd_start(message: Message, state: FSMContext) -> None:
         return
 
     await state.set_state(Setup.pattern)
-    await reply(message, 
-        "Привет. Я считаю дни и часы до выходных и пинаю перед сменой.\n\n"
-        "<b>Шаг 1.</b> Выбери свой цикл:",
+    await reply(
+        message,
+        "Привет! Я присылаю напоминания перед сменой, считаю дни до выходных "
+        "и показываю развозку.\n\n"
+        "Всё управление — в приложении: кнопка «📱 Открыть в приложении» ниже "
+        "или слева от поля ввода.\n\n"
+        "<b>Шаг 1 из 3.</b> Выбери свой цикл смен:",
         reply_markup=pattern_kb().as_markup(),
+        keep=True,
     )
 
 
@@ -182,11 +187,13 @@ async def ask_anchor(message: Message, state: FSMContext, pattern: str) -> None:
     kb.button(text="Вчера", callback_data="anchor:-1")
     kb.button(text="Позавчера", callback_data="anchor:-2")
     kb.adjust(3)
-    await reply(message, 
-        f"<b>Шаг 2.</b> Цикл: <code>{pattern}</code>\n\n"
+    await reply(
+        message,
+        f"<b>Шаг 2 из 3.</b> Цикл: <code>{pattern}</code>\n\n"
         f"Когда была (или будет) первая позиция цикла — <b>{word}</b>?\n"
         "Кнопкой или датой в формате <code>ДД.ММ.ГГГГ</code>",
         reply_markup=kb.as_markup(),
+        keep=True,
     )
 
 
@@ -216,7 +223,7 @@ async def ask_times(message: Message, state: FSMContext) -> None:
     kb.button(text="08:00–20:00 / 20:00–08:00", callback_data="times:default")
     kb.button(text="✏️ Свои часы", callback_data="times:custom")
     kb.adjust(1)
-    await reply(message, "<b>Шаг 3.</b> Часы смен:", reply_markup=kb.as_markup())
+    await reply(message, "<b>Шаг 3 из 3.</b> Часы смен:", reply_markup=kb.as_markup(), keep=True)
 
 
 @router.callback_query(Setup.times, F.data == "times:default")

@@ -61,7 +61,7 @@ def main_kb() -> ReplyKeyboardRemove:
 # ─────────────────────────── /start и /menu ──────────────────────────────
 
 
-@router.message(Command("menu", "меню", "start"))
+@router.message(Command("menu", "меню"))
 async def cmd_menu(message: Message, state: FSMContext) -> None:
     await state.clear()
     user = await get_user(message.from_user.id)
