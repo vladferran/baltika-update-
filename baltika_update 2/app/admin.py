@@ -10,7 +10,7 @@ from aiogram import Bot, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 from sqlalchemy import func, select
 
@@ -29,6 +29,7 @@ def is_admin(user_id: int) -> bool:
 
 
 class Broadcast(StatesGroup):
+    pick = State()      # выбор получателей (только для выборочной рассылки)
     text = State()
     confirm = State()
 
@@ -169,11 +170,103 @@ async def adm_cast(cb: CallbackQuery, state: FSMContext) -> None:
     if not is_admin(cb.from_user.id):
         await cb.answer()
         return
+    await state.clear()
+    kb = InlineKeyboardBuilder()
+    kb.button(text="📢 Всем активным", callback_data="cast:all")
+    kb.button(text="🎯 Выборочно", callback_data="cast:pick")
+    kb.adjust(1)
+    await cb.message.edit_text("Кому отправить?", reply_markup=kb.as_markup())
+    await cb.answer()
+
+
+@router.callback_query(F.data == "cast:all")
+async def cast_all(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id):
+        await cb.answer()
+        return
     await state.set_state(Broadcast.text)
+    await state.update_data(ids=None)
     await cb.message.edit_text(
         "Пришли текст рассылки одним сообщением.\n"
         "HTML поддерживается. Отмена — /otmena"
     )
+    await cb.answer()
+
+
+PICK_LIMIT = 60
+
+
+async def _pick_markup(ids: set[int]) -> InlineKeyboardMarkup:
+    async with Session() as s:
+        users = (
+            await s.execute(
+                select(User)
+                .where(User.is_active.is_(True))
+                .order_by(User.first_name, User.tg_id)
+                .limit(PICK_LIMIT)
+            )
+        ).scalars().all()
+    rows: list[list[InlineKeyboardButton]] = []
+    row: list[InlineKeyboardButton] = []
+    for u in users:
+        name = u.first_name or (f"@{u.username}" if u.username else str(u.tg_id))
+        mark = "✅" if u.tg_id in ids else "⬜"
+        row.append(InlineKeyboardButton(text=f"{mark} {name}"[:60], callback_data=f"castpick:{u.tg_id}"))
+        if len(row) == 2:
+            rows.append(row)
+            row = []
+    if row:
+        rows.append(row)
+    rows.append([InlineKeyboardButton(text=f"Далее · выбрано {len(ids)}", callback_data="castpick:go")])
+    rows.append([InlineKeyboardButton(text="Отмена", callback_data="cast:no")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+@router.callback_query(F.data == "cast:pick")
+async def cast_pick(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id):
+        await cb.answer()
+        return
+    await state.set_state(Broadcast.pick)
+    await state.update_data(ids=[])
+    await cb.message.edit_text(
+        f"Отметь получателей (первые {PICK_LIMIT} активных), потом нажми «Далее».",
+        reply_markup=await _pick_markup(set()),
+    )
+    await cb.answer()
+
+
+@router.callback_query(Broadcast.pick, F.data.startswith("castpick:"))
+async def cast_toggle(cb: CallbackQuery, state: FSMContext) -> None:
+    if not is_admin(cb.from_user.id):
+        await cb.answer()
+        return
+    value = cb.data.split(":", 1)[1]
+    ids = set((await state.get_data()).get("ids") or [])
+
+    if value == "go":
+        if not ids:
+            await cb.answer("Никого не выбрано", show_alert=True)
+            return
+        await state.update_data(ids=sorted(ids))
+        await state.set_state(Broadcast.text)
+        await cb.message.edit_text(
+            f"Получателей выбрано: {len(ids)}.\n"
+            "Пришли текст рассылки одним сообщением. HTML поддерживается. Отмена — /otmena"
+        )
+        await cb.answer()
+        return
+
+    ids.symmetric_difference_update({int(value)})
+    await state.update_data(ids=sorted(ids))
+    await cb.message.edit_reply_markup(reply_markup=await _pick_markup(ids))
+    await cb.answer()
+
+
+@router.callback_query(Broadcast.pick, F.data == "cast:no")
+async def cast_pick_cancel(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    await cb.message.edit_text("Рассылка отменена.")
     await cb.answer()
 
 
@@ -192,10 +285,14 @@ async def cast_preview(message: Message, state: FSMContext) -> None:
     await state.update_data(text=message.html_text)
     await state.set_state(Broadcast.confirm)
 
+    ids = (await state.get_data()).get("ids")
     async with Session() as s:
-        count = (
-            await s.execute(select(func.count(User.tg_id)).where(User.is_active.is_(True)))
-        ).scalar_one()
+        if ids:
+            count = len(ids)
+        else:
+            count = (
+                await s.execute(select(func.count(User.tg_id)).where(User.is_active.is_(True)))
+            ).scalar_one()
 
     kb = InlineKeyboardBuilder()
     kb.button(text=f"📢 Отправить ({count})", callback_data="cast:go")
@@ -228,10 +325,12 @@ async def cast_send(cb: CallbackQuery, state: FSMContext, bot: Bot) -> None:
         await cb.answer("Пустой текст", show_alert=True)
         return
 
+    ids = data.get("ids")
+    query = select(User).where(User.is_active.is_(True))
+    if ids:                                   # выборочная рассылка: только отмеченные
+        query = query.where(User.tg_id.in_(ids))
     async with Session() as s:
-        users = (
-            await s.execute(select(User).where(User.is_active.is_(True)))
-        ).scalars().all()
+        users = (await s.execute(query)).scalars().all()
         targets = [(u.tg_id, u.autoclean, u.clean_after_min) for u in users]
 
     await cb.message.edit_text(f"Отправляю {len(targets)}…")

@@ -67,6 +67,7 @@
         missed_shifts: 3, missed_hours: 36.0, unconfirmed: 2, rate: 0.93,
       },
       vacations: [{id: 1, start: plusDay(todayMsk, 12), finish: plusDay(todayMsk, 25), note: null}],
+      schedule: {pattern: PATTERN, anchor: plusDay(todayMsk, -3)},
       wellness: {
         date: todayMsk, gender: "m", gender_label: "мужской", state: "shift", open: false,
         zones: [{key: "gym", title: "Зал", emoji: "🏋️"}, {key: "pool", title: "Бассейн", emoji: "🏊"}, {key: "sauna", title: "Сауна", emoji: "🧖"}],
@@ -84,7 +85,13 @@
   const realFetch = window.fetch.bind(window);
   window.fetch = async function (url, opts) {
     const json = (obj) => new Response(JSON.stringify(obj), {status: 200, headers: {"Content-Type": "application/json"}});
-    if (String(url).startsWith("/api/state")) return json(state());
+    /* ?setup в адресе — показать экран первой настройки (как у незарегистрированного) */
+    if (String(url).startsWith("/api/state")) {
+      if (location.search.includes("setup")) {
+        return new Response(JSON.stringify({error: "not_registered"}), {status: 404, headers: {"Content-Type": "application/json"}});
+      }
+      return json(state());
+    }
     if (String(url).startsWith("/api/")) return json({ok: true});
     return realFetch(url, opts);
   };

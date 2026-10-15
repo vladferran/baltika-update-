@@ -323,6 +323,44 @@ async def _read(request: web.Request):
     return tg_id, body, None
 
 
+SETUP_ANCHOR_SPAN = 366                   # дата цикла не дальше года от сегодня — иначе опечатка
+
+
+def parse_setup(body) -> dict | None:
+    """График из приложения: цикл и дата, на которую цикл стоит на первой позиции."""
+    if not isinstance(body, dict):
+        return None
+    try:
+        pattern = sch.normalize_pattern(str(body.get("pattern", "")))
+    except ValueError:
+        return None
+    anchor = _parse_day(body.get("anchor"))
+    if anchor is None or abs((anchor - date.today()).days) > SETUP_ANCHOR_SPAN:
+        return None
+    return {"pattern": pattern, "anchor": anchor}
+
+
+async def setup_handler(request: web.Request) -> web.Response:
+    tg_id, body, err = await _read(request)
+    if err:
+        return err
+    data = parse_setup(body)
+    if data is None:
+        return _err("bad_setup", 400)
+
+    async with Session() as session:
+        user = await session.get(User, tg_id)
+        if user is None:
+            # часы смен берём из значений по умолчанию модели; меняются в боте (/perenastroit)
+            user = User(tg_id=tg_id)
+            session.add(user)
+        user.pattern = data["pattern"]
+        user.anchor = data["anchor"]
+        user.is_active = True
+        await session.commit()
+    return web.json_response({"ok": True})
+
+
 # ---------- обработчики ----------
 
 async def index(request: web.Request) -> web.StreamResponse:
@@ -360,6 +398,7 @@ async def state(request: web.Request) -> web.Response:
             "wellness": wl.access(cfg, today),
             "weather": await _weather_json(user),
             "settings": _settings_json(user),
+            "schedule": {"pattern": user.pattern, "anchor": user.anchor.isoformat()},
         }
     return web.json_response(payload)
 
@@ -510,6 +549,7 @@ def make_app() -> web.Application:
     app.router.add_post("/api/vacation/delete", vacation_delete)
     app.router.add_post("/api/sick", sick_handler)
     app.router.add_post("/api/hired", hired_handler)
+    app.router.add_post("/api/setup", setup_handler)
     if ASSETS.is_dir():                       # JS и CSS сборки (имена с хешем)
         app.router.add_static("/assets/", ASSETS, show_index=False)
     if STATIC.is_dir():                       # логотип и прочая статика: webapp/static/
